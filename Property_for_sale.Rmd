@@ -1,0 +1,179 @@
+---
+title: "Final Project-220"
+author: "Xinyue Zhang"
+date: "11/15/2016"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+property <- read.table(url("http://www.pstat.ucsb.edu/faculty/yuedong/classes/data/property.txt"),header = T)
+head(property)
+attach(property)
+```
+
+### Check the linear relationship
+```{r}
+pairs(property)
+round(cor(property),5)
+```
+
+we choose size, dt as the explanatory variables
+
+#### check their relationship
+```{r}
+model1<-lm(price~size+dt+dc+age,data=property)
+summary(model1)
+model2<-step(model1, direction="backward")
+summary(model1)
+par(mfrow=c(2,2))
+plot(model1)
+abline(0,1)
+
+library(MASS)
+boxcox(model2,plotit=T,lambda=seq(-4,5,len=83))
+model3<-lm(price^0.5~size+dt+age)
+par(mfrow=c(2,2))
+plot(model3)
+summary(model3)
+```
+
+
+#### Perform diagnostics for the fitted model.
+
+###### check the constant variance assumption
+```{r}
+par(mfrow=c(2,2))
+plot(fitted(model3), residuals(model3), xlab="Fitted", ylab="Residuals")
+abline(h=0)
+title("Residuals vs fitted")
+```
+
+###### Check the normality assumption
+```{r}
+qqnorm(residuals(model3), ylab="Residuals",main='QQ-plot of residuals')
+qqline(residuals(model3))
+```
+
+From the QQ plot, the normality assumption is satisfied.
+###### Check for outliers
+```{r}
+library(car)
+outlierTest(model3)
+```
+
+###### Check for influential points
+```{r}
+model3inf <- influence(model3)
+plot(model3inf$coef[,4],ylab="Change in age coef")
+#identify(LM2inf$coef[,4],n=4)
+influencePlot(model3)
+```
+
+
+###### Construct added variable and partial residual plots
+```{r}
+par(mfrow=c(2,3))
+d1 <- residuals(lm(price^0.4 ~ size + dt))
+m1 <- residuals(lm(age ~ size + dt))
+plot(m1,d1,xlab="age residual",ylab="price residuals")
+abline(0,coef(model2)[4])
+lines(lowess(m1,d1), col="red", lty=2)
+title("Added variable plot for age")
+pr1 <- residuals(model2)+coef(model2)[4]*age
+plot(age, pr1, xlab="age",ylab="Partial residuals")
+abline(0,coef(model2)[4])
+lines(lowess(age,pr1), col="red", lty=2)
+title("Partial residual plot for age")
+
+d2 <- residuals(lm(price^0.4 ~ size + age))
+m2 <- residuals(lm(dt ~ size + age))
+plot(m2,d2,xlab="dt residual",ylab="price residuals")
+abline(0,coef(model2)[3])
+lines(lowess(m2,d2), col="red", lty=2)
+title("Added variable plot for dt")
+pr2 <- residuals(model2)+coef(model2)[3]*dt
+plot(dt, pr2, xlab="dt",ylab="Partial residuals")
+abline(0,coef(model2)[3])
+lines(lowess(dt,pr2), col="red", lty=2)
+title("Partial residual plot for dt")
+
+d3 <- residuals(lm(price^0.4 ~ age + dt))
+m3 <- residuals(lm(size ~ age + dt))
+plot(m3,d3,xlab="size residual",ylab="price residuals")
+abline(0,coef(model2)[2])
+lines(lowess(m3,d3), col="red", lty=2)
+title("Added variable plot for size")
+pr3 <- residuals(model2)+coef(model2)[2]*size
+plot(size, pr3, xlab="size",ylab="Partial residuals")
+abline(0,coef(model2)[2])
+lines(lowess(size,pr3), col="red", lty=2)
+title("Partial residual plot for size")
+```
+
+AIC
+```{r}
+model4<-lm(price^0.5~size+dt+age+I(age^2)+I(age^3))
+model41<-step(model4, direction="backward")
+summary(model41)
+```
+
+Mallow Cp vs Adjusted R^2
+```{r}
+library(boot)
+library(leaps)
+par(mfrow=c(2,2))
+library(leaps)
+a <- regsubsets(formula(model4), data=property,method="exhaustive") 
+(rs <- summary(a))
+plot(2:6,rs$cp,xlab="Number of parameters",ylab="Cp statistic",cex=0.3)
+abline(0,1)
+plot(2:6, rs$adjr2, xlab="Number of parameters", ylab="Adjusted R-square")
+```
+
+CV estimation
+```{r}
+X <- model.matrix(model4)
+fold <- sample(rep(1:10,4)) 
+pse.cv <- matrix(NA,5,10)
+for (i in 1:5) { 
+for (j in 1:10) {
+tmp <- lm(price^0.5~X[,rs$which[i,]]-1, subset=fold!=j) 
+pred <- X[fold==j,rs$which[i,]]%*%coef(tmp) 
+pse.cv[i,j] <- mean(((price[fold==j])^0.5-pred)^2)
+}}
+plot(2:6, apply(pse.cv,1,mean), xlab="Number of parameters",ylab="CV estimates of prediction errors")
+```
+
+
+Lasso
+```{r}
+library(glmnet)
+set.seed(1)
+X1 <- model.matrix(model4)[,-1]
+fit.lasso <- glmnet(X1, price^0.5, lambda.min=0, nlambda=101, alpha=1)
+plot(fit.lasso, xvar="lambda", xlim=c(-8,0))
+text(-8,coef(fit.lasso)[-1,length(fit.lasso$lambda)],labels=colnames(X1),cex=0.6) 
+fit.lasso.cv <- cv.glmnet(X1, price^0.5, lambda.min=0, nlambda=101)
+abline(v=log(fit.lasso.cv$lambda.min), col="red")
+mtext("CV estimate", side=1, at=log(fit.lasso.cv$lambda.min), cex=.6)
+plot(fit.lasso.cv)
+coef.lasso <- predict(fit.lasso, type="coefficients",s=fit.lasso.cv$lambda.min) 
+cbind(coef(model1), as.vector(coef.lasso))
+```
+
+Final model
+
+```{r}
+model5<-lm(price^0.5 ~ size + dt +age+ I(age^2))
+summary(model5)
+par(mfrow=c(2,2))
+model5inf <- influence(model5)
+plot(model5inf$coef[,4],ylab="Change in age coef")
+identify(model5inf$coef[,4],n=4)
+
+influencePlot(model5)
+outlierTest(model5)
+## without influential points
+LM5=update(model5,subset=-c(45,51))
+summary(LM5)
+```
